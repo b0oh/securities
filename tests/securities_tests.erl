@@ -26,10 +26,19 @@
                   {"2012-04-11 15:00", 1.22, 1.22, 1.22, 1.22, 200},
                   {"2012-04-11 16:00", 1.24, 1.24, 1.24, 1.24, 400}]).
 
-setup(Data) ->
+-export([load_operations/0]).
+
+
+load_operations() ->
+  lists:foreach(fun add_operation/1, ?OPERATIONS).
+
+
+
+
+setup() ->
   securities:start_link(),
-  lists:foreach(fun add_operation/1, Data),  
-  Data.
+  load_operations(),
+  ok.
 
 
 cleanup() ->
@@ -37,34 +46,33 @@ cleanup() ->
 
 
 securities_test_() ->
-  {setup, fun() -> setup(?OPERATIONS) end,
+  {setup, fun() -> setup() end,
    fun(_) -> cleanup() end,
-   fun securities_tests/1}.
+   fun(_) -> securities_tests() end}.
 
 
-securities_tests(Data) ->
-  EchoData = lists:filter(fun({Paper, _, _, _}) -> Paper == "echo" end, Data),
-  [echo_tests(EchoData)].
+securities_tests() ->
+  [papers_tests(), echo_papers_tests()].
 
 
-echo_tests(EchoData) ->
-  Operations = securities:get_operations("echo"),
-  Tests = lists:map(fun(Op) -> operation_match(Op, Operations) end, EchoData),
-  [?_assert(lists:member("echo", securities:get_papers())),
-   ?_assertEqual(length(EchoData), length(Operations)),
-   Tests].
+papers_tests() ->
+  [?_assertMatch(["echo"], securities:get_papers()),
+   ?_assertError({case_clause, {error, not_found}}, securities:get_operations("unexistance"))].
 
 
-entries_test_() ->
-  securities:start_link(),
-  lists:foreach(fun add_operation/1, lists:sublist(?OPERATIONS, 5)),
+echo_papers_tests() ->
+  EchoOperations = lists:filter(fun({Paper, _, _, _}) -> Paper == "echo" end, ?OPERATIONS),
+  StoredOperations = securities:get_operations("echo"),
+  OperationTests = lists:map(fun(Op) -> operation_match(Op, StoredOperations) end, EchoOperations),
   Entries = securities:get_entries("echo",
                                    parse_datetime("2012-04-11 00:00"),
                                    parse_datetime("2012-04-12 00:00"),
                                    hour),
-  securities:shutdown(),
-  lists:map(fun(Entry) -> entry_match(Entry, Entries) end, lists:sublist(?ENTRIES, 2)).
-
+  EntryTests = lists:map(fun(Entry) -> entry_match(Entry, Entries) end, ?ENTRIES),
+  [?_assertEqual(length(EchoOperations), length(StoredOperations)),
+   ?_assertEqual(length(?ENTRIES), length(Entries)),
+   OperationTests,
+   EntryTests].
 
 
 %% Internal functions
@@ -84,8 +92,7 @@ parse_datetime(Datetime) ->
   {{Y, M, D}, {H, I, 0}}.
 
 
-add_operation(Data) ->
-  {Paper, Datetime, Price, Amount} = Data,
+add_operation({Paper, Datetime, Price, Amount}) ->
   securities:add_operation(Paper, parse_datetime(Datetime), Price, Amount).
 
 

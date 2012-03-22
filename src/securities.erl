@@ -2,6 +2,8 @@
 -behaviour(gen_server).
 -include("securities.hrl").
 
+-define(D(X), io:format("~p:~p ~p~n", [?MODULE, ?LINE, X])).
+
 %% API
 -export([start_link/0, get_papers/0, add_operation/4, get_operations/1, get_entries/4, shutdown/0]).
 %% gen_server callbacks
@@ -10,6 +12,7 @@
 
 
 %% Client API
+
 start_link() ->
   gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
@@ -60,7 +63,7 @@ handle_call(papers, _From, Papers) ->
 handle_call({operation, Paper, #op{} = Operation}, _From, Papers) ->
   Value = case dict:find(Paper, Papers) of
             {ok, Operations} ->
-              [Operation | Operations];
+              insert_operation(Operation, Operations);
             error ->
               [Operation]
           end,
@@ -110,19 +113,63 @@ code_change(_OldVsn, State, _Extra) ->
 
 %% Internal functions
 
-filter_operations(Operations, StartTimestamp, EndTimestamp) ->
-  lists:filter(fun(#op{timestamp = Timestamp}) ->
-                   Timestamp >= StartTimestamp andalso Timestamp =< EndTimestamp
-               end, Operations).
+%% insert_operation(Op, []) ->
+%%   ?D({insert, last, Op}),
+%%   [Op];
+
+%% insert_operation(#op{timestamp = Ts} = Op, [#op{timestamp = CompareTs} = CompareOp | Operations]) when Ts > CompareTs ->
+%%   ?D({insert, more, Op}),
+%%   [CompareOp | insert_operation(Op, Operations)];
+
+%% insert_operation(Op, Operations) ->
+%%   ?D({insert, gotcha, Op}),
+%%   [Op | Operations].
+
+insert_operation(Op, Ops) ->
+  insert_operation(Op, Ops, []).
+
+
+insert_operation(#op{timestamp = Ts} = Op,
+                 [#op{timestamp = CompareTs} = CompareOp | Ops],
+                 Acc) when Ts < CompareTs ->
+  insert_operation(Op, Ops, [CompareOp | Acc]);
+
+insert_operation(Op, [], Acc) ->
+  [Op | Acc];
+
+insert_operation(Op, Ops, Acc) ->
+  lists:reverse(Acc) ++ [Op] ++ Ops.
+
+
+
+%% filter_operations(Operations, StartTimestamp, EndTimestamp) ->
+%%   lists:filter(fun(#op{timestamp = Timestamp}) ->
+%%                    Timestamp >= StartTimestamp andalso Timestamp =< EndTimestamp
+%%                end, Operations).
+
+filter_operations(Ops, StartTs, EndTs) ->
+  filter_operations(Ops, StartTs, EndTs, []).
+
+
+filter_operations([#op{timestamp = Ts} | Ops], StartTs, EndTs, Acc) when Ts > EndTs ->
+  filter_operations(Ops, StartTs, EndTs, Acc);
+
+filter_operations([#op{timestamp = Ts} | _], StartTs, _, Acc) when Ts < StartTs ->
+  Acc;
+
+filter_operations([], _, _, Acc) ->
+  Acc;
+
+filter_operations([Op | Ops], StartTs, EndTs, Acc) ->
+  filter_operations(Ops, StartTs, EndTs, [Op | Acc]).
+
 
 
 make_entries(Operations, _Scale) ->
-  
-  lists:foldl(fun fill_entry/2, [], lists:reverse(Operations)).
+  lists:reverse(lists:foldl(fun fill_entry/2, [], Operations)).
 
 
 fill_entry(#op{timestamp = Timestamp, price = Price, amount = Amount}, []) ->
-  io:format("PIUPIU INIT~n"),
   {{Y, M, D}, {H, _, _}} = calendar:gregorian_seconds_to_datetime(Timestamp),
   [#entry{start_timestamp = calendar:datetime_to_gregorian_seconds({{Y, M, D}, {H, 0, 0}}),
           start_price = Price,
@@ -131,25 +178,20 @@ fill_entry(#op{timestamp = Timestamp, price = Price, amount = Amount}, []) ->
           max_price = Price,
           amount = Amount}];
 
-
 fill_entry(#op{timestamp = OpTimestamp, price = OpPrice, amount = OpAmount},
            [#entry{start_timestamp = EntryTimestamp,
                    min_price = MinPrice,
                    max_price = MaxPrice,
                    amount = EntryAmount} = Entry
             | Tail] = Entries) ->
-  {{_,_,_},{H,_,_}} = calendar:gregorian_seconds_to_datetime(OpTimestamp),
-  io:format("AY NANE ~p~n", [H]),
   case OpTimestamp < (EntryTimestamp + 3600) of
     true ->
-      io:format("NAFANAINA ~p ~p ~p~n", [OpTimestamp, EntryTimestamp + 3600, OpTimestamp < (EntryTimestamp + 3600)]),
       NewEntry = Entry#entry{end_price = OpPrice,
                              min_price = lists:min([OpPrice, MinPrice]),
                              max_price = lists:max([OpPrice, MaxPrice]),
                              amount = EntryAmount + OpAmount},
       [NewEntry | Tail];
     false ->
-      io:format("SHKOLOLO ~p~n", [Entries]),
       [#entry{start_timestamp = EntryTimestamp + 3600,
               start_price = OpPrice,
               end_price = OpPrice,
