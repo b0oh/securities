@@ -2,15 +2,18 @@
 -behaviour(gen_server).
 -include("securities.hrl").
 
--define(D(X), io:format("~p:~p ~p~n", [?MODULE, ?LINE, X])).
-
 %% API
 -export([start_link/0, get_papers/0, add_operation/4, get_operations/1, get_entries/4, shutdown/0]).
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 
+-define(D(X), io:format("~p:~p ~p~n", [?MODULE, ?LINE, X])).
 
+-define(SCALES, [{hour, 3600},
+                 {day, 3600 * 24},
+                 {week, 3600 * 24 * 7},
+                 {month, fun month_scale/2}]).
 %% Client API
 
 start_link() ->
@@ -113,18 +116,6 @@ code_change(_OldVsn, State, _Extra) ->
 
 %% Internal functions
 
-%% insert_operation(Op, []) ->
-%%   ?D({insert, last, Op}),
-%%   [Op];
-
-%% insert_operation(#op{timestamp = Ts} = Op, [#op{timestamp = CompareTs} = CompareOp | Operations]) when Ts > CompareTs ->
-%%   ?D({insert, more, Op}),
-%%   [CompareOp | insert_operation(Op, Operations)];
-
-%% insert_operation(Op, Operations) ->
-%%   ?D({insert, gotcha, Op}),
-%%   [Op | Operations].
-
 insert_operation(Op, Ops) ->
   insert_operation(Op, Ops, []).
 
@@ -140,12 +131,6 @@ insert_operation(Op, [], Acc) ->
 insert_operation(Op, Ops, Acc) ->
   lists:reverse(Acc) ++ [Op] ++ Ops.
 
-
-
-%% filter_operations(Operations, StartTimestamp, EndTimestamp) ->
-%%   lists:filter(fun(#op{timestamp = Timestamp}) ->
-%%                    Timestamp >= StartTimestamp andalso Timestamp =< EndTimestamp
-%%                end, Operations).
 
 filter_operations(Ops, StartTs, EndTs) ->
   filter_operations(Ops, StartTs, EndTs, []).
@@ -164,38 +149,72 @@ filter_operations([Op | Ops], StartTs, EndTs, Acc) ->
   filter_operations(Ops, StartTs, EndTs, [Op | Acc]).
 
 
+make_entries(Operations, Scale) ->
+  lists:reverse(lists:foldl(fun(Op, Entries) -> fold_entry(Op, Entries, Scale) end, [], Operations)).
 
-make_entries(Operations, _Scale) ->
-  lists:reverse(lists:foldl(fun fill_entry/2, [], Operations)).
+
+fold_entry(#op{timestamp = Ts, price = Price, amount = Amount}, [], Scale) ->
+  [create_entry(scale_start(Ts, Scale), Price, Amount)];
+
+fold_entry(Op, [#entry{start_timestamp = Ts} = Entry | Entries], Scale) ->
+  fill_entry(Op, Entry, Entries, scale_next(Ts, Scale)).
 
 
-fill_entry(#op{timestamp = Timestamp, price = Price, amount = Amount}, []) ->
-  {{Y, M, D}, {H, _, _}} = calendar:gregorian_seconds_to_datetime(Timestamp),
-  [#entry{start_timestamp = calendar:datetime_to_gregorian_seconds({{Y, M, D}, {H, 0, 0}}),
-          start_price = Price,
-          end_price = Price,
-          min_price = Price,
-          max_price = Price,
-          amount = Amount}];
+%% if operation time less than current entry time
+%% add new operation to entry
+fill_entry(#op{timestamp = Ts} = Op, Entry, Entries, NextTs) when Ts < NextTs ->
+  [update_entry(Entry, Op) | Entries];
 
-fill_entry(#op{timestamp = OpTimestamp, price = OpPrice, amount = OpAmount},
-           [#entry{start_timestamp = EntryTimestamp,
-                   min_price = MinPrice,
-                   max_price = MaxPrice,
-                   amount = EntryAmount} = Entry
-            | Tail] = Entries) ->
-  case OpTimestamp < (EntryTimestamp + 3600) of
+%% or else create new entry
+fill_entry(#op{price = Price, amount = Amount}, Entry, Entries, NextTs) ->
+  [create_entry(NextTs, Price, Amount) | [Entry | Entries]].
+
+
+update_entry(#entry{min_price = MinPrice, max_price = MaxPrice, amount = Amount} = Entry,
+             #op{price = OpPrice, amount = OpAmount}) ->
+  Entry#entry{end_price = OpPrice,
+              min_price = erlang:min(OpPrice, MinPrice),
+              max_price = erlang:max(OpPrice, MaxPrice),
+              amount = Amount + OpAmount}.
+
+
+create_entry(Ts, Price, Amount) ->
+  #entry{start_timestamp = Ts,
+         start_price = Price,
+         end_price = Price,
+         min_price = Price,
+         max_price = Price,
+         amount = Amount}.
+
+
+scale_start(Ts, PropName) ->
+  Scale = proplists:get_value(PropName, ?SCALES),
+  case is_integer(Scale) of
     true ->
-      NewEntry = Entry#entry{end_price = OpPrice,
-                             min_price = lists:min([OpPrice, MinPrice]),
-                             max_price = lists:max([OpPrice, MaxPrice]),
-                             amount = EntryAmount + OpAmount},
-      [NewEntry | Tail];
+      Ts - (Ts rem Scale);
     false ->
-      [#entry{start_timestamp = EntryTimestamp + 3600,
-              start_price = OpPrice,
-              end_price = OpPrice,
-              min_price = OpPrice,
-              max_price = OpPrice,
-              amount = OpAmount} | Entries]
+      Scale(start, Ts)
   end.
+
+
+scale_next(Ts, PropName) ->
+  Scale = proplists:get_value(PropName, ?SCALES),
+  case is_integer(Scale) of
+    true ->
+      Ts + Scale;
+    false ->
+      Scale(next, Ts)
+  end.
+
+
+month_scale(start, Ts) ->
+  {{Y, M, _}, _} = calendar:gregorian_seconds_to_datetime(Ts),
+  calendar:datetime_to_gregorian_seconds({{Y, M, 1}, {0, 0, 0}});
+
+month_scale(next, Ts) ->
+  {{Y, M, _}, _} = calendar:gregorian_seconds_to_datetime(Ts),
+  NextMonth = case M + 1 > 12 of
+                true -> 1;
+                false -> M + 1
+              end,
+  calendar:datetime_to_gregorian_seconds({{Y, NextMonth, 1}, {0, 0, 0}}).
