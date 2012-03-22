@@ -1,9 +1,9 @@
 -module(securities).
 -behaviour(gen_server).
--include("operation.hrl").
+-include("securities.hrl").
 
 %% API
--export([start_link/0, get_papers/0, add_operation/4, get_operations/1, shutdown/0]).
+-export([start_link/0, get_papers/0, add_operation/4, get_operations/1, get_entries/4, shutdown/0]).
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
@@ -32,6 +32,15 @@ get_operations(Paper) ->
   case gen_server:call(?MODULE, {operation, Paper}) of
     {ok, Ops} ->
       Ops
+  end.
+
+
+get_entries(Paper, StartDatetime, EndDatetime, Scale) ->
+  StartTimestamp = calendar:datetime_to_gregorian_seconds(StartDatetime),
+  EndTimestamp = calendar:datetime_to_gregorian_seconds(EndDatetime),
+  case gen_server:call(?MODULE, {entries, Paper, StartTimestamp, EndTimestamp, Scale}) of
+    {ok, Entries} ->
+      Entries
   end.
 
 
@@ -66,6 +75,15 @@ handle_call({operation, Paper}, _From, Papers) ->
         end,
   {reply, Res, Papers};
 
+handle_call({entries, Paper, StartTimestamp, EndTimestamp, Scale}, _From, Papers) ->
+  Res = case dict:find(Paper, Papers) of
+          {ok, Operations} ->
+            {ok, make_entries(filter_operations(Operations, StartTimestamp, EndTimestamp), Scale)};
+          error ->
+            {error, not_found}
+        end,
+  {reply, Res, Papers};
+
 handle_call(terminate, _From, State) ->
   {stop, normal, ok, State};
 
@@ -89,4 +107,53 @@ terminate(_Reason, _State) ->
 code_change(_OldVsn, State, _Extra) ->
   {ok, State}.
 
+
 %% Internal functions
+
+filter_operations(Operations, StartTimestamp, EndTimestamp) ->
+  lists:filter(fun(#op{timestamp = Timestamp}) ->
+                   Timestamp >= StartTimestamp andalso Timestamp =< EndTimestamp
+               end, Operations).
+
+
+make_entries(Operations, _Scale) ->
+  
+  lists:foldl(fun fill_entry/2, [], lists:reverse(Operations)).
+
+
+fill_entry(#op{timestamp = Timestamp, price = Price, amount = Amount}, []) ->
+  io:format("PIUPIU INIT~n"),
+  {{Y, M, D}, {H, _, _}} = calendar:gregorian_seconds_to_datetime(Timestamp),
+  [#entry{start_timestamp = calendar:datetime_to_gregorian_seconds({{Y, M, D}, {H, 0, 0}}),
+          start_price = Price,
+          end_price = Price,
+          min_price = Price,
+          max_price = Price,
+          amount = Amount}];
+
+
+fill_entry(#op{timestamp = OpTimestamp, price = OpPrice, amount = OpAmount},
+           [#entry{start_timestamp = EntryTimestamp,
+                   min_price = MinPrice,
+                   max_price = MaxPrice,
+                   amount = EntryAmount} = Entry
+            | Tail] = Entries) ->
+  {{_,_,_},{H,_,_}} = calendar:gregorian_seconds_to_datetime(OpTimestamp),
+  io:format("AY NANE ~p~n", [H]),
+  case OpTimestamp < (EntryTimestamp + 3600) of
+    true ->
+      io:format("NAFANAINA ~p ~p ~p~n", [OpTimestamp, EntryTimestamp + 3600, OpTimestamp < (EntryTimestamp + 3600)]),
+      NewEntry = Entry#entry{end_price = OpPrice,
+                             min_price = lists:min([OpPrice, MinPrice]),
+                             max_price = lists:max([OpPrice, MaxPrice]),
+                             amount = EntryAmount + OpAmount},
+      [NewEntry | Tail];
+    false ->
+      io:format("SHKOLOLO ~p~n", [Entries]),
+      [#entry{start_timestamp = EntryTimestamp + 3600,
+              start_price = OpPrice,
+              end_price = OpPrice,
+              min_price = OpPrice,
+              max_price = OpPrice,
+              amount = OpAmount} | Entries]
+  end.
