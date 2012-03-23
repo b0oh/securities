@@ -133,8 +133,8 @@ entries_tests() ->
    %% strings in args
    ?_assert(2 == length(securities:get_entries("entry_test", "0000-01-02 00:00", "0000-01-02 02:00", hour))),
 
-   %% skip hours test, after 2 o'clock missing two hours, next entry
-   %% should start from 5 o'clock
+   %% skip hours test, after 2 o'clock missing two hours,
+   %% next entry should start from 5 o'clock
    ?_assertMatch(FiveOclock,
                  lists:last(securities:get_entries("entry_test", "0000-01-02 02:00", "0000-01-02 06:00", hour))),
 
@@ -159,7 +159,7 @@ entries_month_tests() ->
   [?_assertEqual(2, length(Entries)),
    entry_match(April, Entries),
    entry_match(May, Entries)].
-  
+
 
 echo_papers_tests() ->
   EchoOperations = lists:filter(fun({Paper, _, _, _}) -> Paper == "echo" end, ?OPERATIONS),
