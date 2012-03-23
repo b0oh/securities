@@ -3,7 +3,7 @@
 -include("securities.hrl").
 
 %% API
--export([start_link/0, get_papers/0, add_operation/4, get_operations/1, get_entries/4, shutdown/0]).
+-export([start_link/0, parse_datetime/1, get_papers/0, add_operation/4, get_operations/1, get_entries/4, shutdown/0]).
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
@@ -15,9 +15,18 @@
                  {week, 3600 * 24 * 7},
                  {month, fun month_scale/2}]).
 %% Client API
-
 start_link() ->
   gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+
+parse_datetime(Dt) when is_list(Dt) ->
+  case io_lib:fread("~4d-~2d-~2d ~2d:~2d", Dt) of
+    {ok, [Y, M, D, H, I], []} ->
+      {{Y, M, D}, {H, I, 0}};
+    _ ->
+      {ok, [Y, M, D, H, I, S], []} = io_lib:fread("~4d-~2d-~2d ~2d:~2d:~2d", Dt),
+      {{Y, M, D}, {H, I, S}}
+  end.
 
 
 get_papers() ->
@@ -27,24 +36,50 @@ get_papers() ->
   end.
 
 
-add_operation(Paper, Datetime, Price, Amount) ->
-  Timestamp = calendar:datetime_to_gregorian_seconds(Datetime),
-  gen_server:call(?MODULE, {operation, Paper, #op{timestamp = Timestamp,
+add_operation(Paper, Dt, Price, Amount) when is_list(Dt) ->
+  add_operation(Paper, parse_datetime(Dt), Price, Amount);
+
+add_operation(Paper, {{_,_,_},{_,_,_}} = Dt, Pr, Am) ->
+  add_operation(Paper, calendar:datetime_to_gregorian_seconds(Dt), Pr, Am);
+
+add_operation(Paper, Dt, Price, Amount) when is_integer(Price) orelse
+                                             is_integer(Amount) ->
+  add_operation(Paper, Dt, float(Price), float(Amount));
+
+add_operation(Paper, Ts, Price, Amount) when is_list(Paper) andalso
+                                             is_integer(Ts) andalso
+                                             is_float(Price) andalso
+                                             is_float(Amount) ->
+  gen_server:call(?MODULE, {operation, Paper, #op{timestamp = Ts,
                                                   price = Price,
                                                   amount = Amount}}).
 
 
-get_operations(Paper) ->
+get_operations(Paper) when is_list(Paper) ->
   case gen_server:call(?MODULE, {operation, Paper}) of
     {ok, Ops} ->
       Ops
   end.
 
 
-get_entries(Paper, StartDatetime, EndDatetime, Scale) ->
-  StartTimestamp = calendar:datetime_to_gregorian_seconds(StartDatetime),
-  EndTimestamp = calendar:datetime_to_gregorian_seconds(EndDatetime),
-  case gen_server:call(?MODULE, {entries, Paper, StartTimestamp, EndTimestamp, Scale}) of
+get_entries(Paper, StartDt, EndDt, Scale) when is_list(StartDt) andalso is_list(EndDt) ->
+  get_entries(Paper,
+              parse_datetime(StartDt),
+              parse_datetime(EndDt),
+              Scale);
+
+get_entries(Paper, {{_, _, _}, {_, _, _}} = StartDt, {{_, _, _}, {_, _, _}} = EndDt, Scale) ->
+  get_entries(Paper,
+              calendar:datetime_to_gregorian_seconds(StartDt),
+              calendar:datetime_to_gregorian_seconds(EndDt),
+              Scale);
+
+get_entries(Paper, StartTs, EndTs, Scale) when is_list(Paper) andalso
+                                               is_integer(StartTs) andalso
+                                               is_integer(EndTs) andalso
+                                               StartTs < EndTs ->
+  true = lists:member(Scale, proplists:get_keys(?SCALES)),
+  case gen_server:call(?MODULE, {entries, Paper, StartTs, EndTs, Scale}) of
     {ok, Entries} ->
       Entries
   end.
@@ -126,7 +161,7 @@ insert_operation(#op{timestamp = Ts} = Op,
   insert_operation(Op, Ops, [CompareOp | Acc]);
 
 insert_operation(Op, [], Acc) ->
-  [Op | Acc];
+  lists:reverse(Acc) ++ [Op];
 
 insert_operation(Op, Ops, Acc) ->
   lists:reverse(Acc) ++ [Op] ++ Ops.
@@ -135,8 +170,9 @@ insert_operation(Op, Ops, Acc) ->
 filter_operations(Ops, StartTs, EndTs) ->
   filter_operations(Ops, StartTs, EndTs, []).
 
+%% @TODO: document [StartTs, EndTs), noted reversing
 
-filter_operations([#op{timestamp = Ts} | Ops], StartTs, EndTs, Acc) when Ts > EndTs ->
+filter_operations([#op{timestamp = Ts} | Ops], StartTs, EndTs, Acc) when Ts >= EndTs ->
   filter_operations(Ops, StartTs, EndTs, Acc);
 
 filter_operations([#op{timestamp = Ts} | _], StartTs, _, Acc) when Ts < StartTs ->
@@ -156,18 +192,18 @@ make_entries(Operations, Scale) ->
 fold_entry(#op{timestamp = Ts, price = Price, amount = Amount}, [], Scale) ->
   [create_entry(scale_start(Ts, Scale), Price, Amount)];
 
-fold_entry(Op, [#entry{start_timestamp = Ts} = Entry | Entries], Scale) ->
-  fill_entry(Op, Entry, Entries, scale_next(Ts, Scale)).
-
-
-%% if operation time less than current entry time
-%% add new operation to entry
-fill_entry(#op{timestamp = Ts} = Op, Entry, Entries, NextTs) when Ts < NextTs ->
-  [update_entry(Entry, Op) | Entries];
-
-%% or else create new entry
-fill_entry(#op{price = Price, amount = Amount}, Entry, Entries, NextTs) ->
-  [create_entry(NextTs, Price, Amount) | [Entry | Entries]].
+fold_entry(#op{timestamp = OpTs, price = Price, amount = Amount} = Op,
+           [#entry{start_timestamp = CurrentTs} = Entry | Entries], Scale) ->
+  NextEntryTs = scale_next(CurrentTs, Scale),
+  if
+    %% if operation time less than current entry time
+    %% add new operation to entry
+    OpTs < NextEntryTs ->
+      [update_entry(Entry, Op) | Entries];
+    %% or else create new entry
+    true ->
+      [create_entry(scale_start(OpTs, Scale), Price, Amount) | [Entry | Entries]]
+  end.
 
 
 update_entry(#entry{min_price = MinPrice, max_price = MaxPrice, amount = Amount} = Entry,
