@@ -3,11 +3,10 @@
 -include("securities.hrl").
 
 %% API
--export([start_link/0, parse_datetime/1, get_papers/0, add_operation/4, get_operations/1, get_entries/4, shutdown/0]).
+-export([start_link/0, parse_datetime/1, get_scales/0, get_papers/0,
+         add_operation/4, get_operations/1, get_entries/4, shutdown/0]).
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
-
--define(D(X), io:format("~p:~p ~p~n", [?MODULE, ?LINE, X])).
 
 -define(SCALES, [{hour, 3600},
                  {day, 3600 * 24},
@@ -35,6 +34,12 @@ parse_datetime(Dt) when is_list(Dt) ->
       {ok, [Y, M, D, H, I, S], []} = io_lib:fread("~4d-~2d-~2d ~2d:~2d:~2d", Dt),
       {{Y, M, D}, {H, I, S}}
   end.
+
+
+%% @spec get_scales() -> [atom()]
+get_scales() ->
+  % proplists:get_keys(?SCALES). — it work but break ordering
+  lists:map(fun({Name, _}) -> Name end, ?SCALES).
 
 
 %% @spec get_papers() -> [string()]
