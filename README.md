@@ -61,17 +61,13 @@ HTTP Server handling 4 requests:
    `name` and `scale` should be existing values, `from` and `to` should be _Datatime_<br>
    return list of entry, entry example:<br>
 `{"startTime": "2012-04-11 00:00:00",
-
   "startPrice": 1.21,
-
   "endPrice": 1.26,
-
   "minPrice": 1.21,
-
   "maxPrice": 1.26,
-
-  "amount": 1200.0}`<br>
-   `startPrice`, `endPrice`, `minPrice`, `maxPrice`, `amount` ­— float values, `startTime` — string
+  "amount": 1200.0}`<br><br>
+   `startPrice`, `endPrice`, `minPrice`, `maxPrice`, `amount` — float values,<br>
+   `startTime` — string value
 4. `POST /api/operation` — it require valid post data:
    * `name`
    * `time` — Datetime
