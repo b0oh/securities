@@ -60,11 +60,11 @@ HTTP Server handling 4 requests:
 3. `GET /api/entries?name=echo&from=2012-04-11%2000%3A00&to=2012-04-12%2000%3A00&scale=hour`<br>
    `name` and `scale` should be existing values, `from` and `to` should be _Datatime_<br>
    return list of entry, entry example:<br>
-`{"startTime": "2012-04-11 00:00:00",
-  "startPrice": 1.21,
-  "endPrice": 1.26,
-  "minPrice": 1.21,
-  "maxPrice": 1.26,
+`{"startTime": "2012-04-11 00:00:00",<br>
+  "startPrice": 1.21,<br>
+  "endPrice": 1.26,<br>
+  "minPrice": 1.21,<br>
+  "maxPrice": 1.26,<br>
   "amount": 1200.0}`<br>
    `startPrice`, `endPrice`, `minPrice`, `maxPrice`, `amount` ­— float values, `startTime` — string
 4. `POST /api/operation` — it require valid post data:
