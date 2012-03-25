@@ -1,0 +1,10 @@
+{application, securities,
+  [{description, ""},
+   {vsn, "1.0"},
+   {modules, [securities_app, securities_app_sup,
+              securities, securities_sup,
+              securities_http, securities_http_sup]},
+   {registered, []},
+   {applications, [kernel, stdlib]},
+   {mod, {securities_app, []}},
+   {env, []}]}.

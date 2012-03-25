@@ -1,3 +1,8 @@
+APP_NAME=securities_app
+CONFIG=priv/securities
+
+ERL_ARGS=-pa ebin deps/*/ebin -config $(CONFIG) -sname $(APP_NAME) -s $(APP_NAME)
+
 all: compile
 
 get-deps:
@@ -15,7 +20,11 @@ clean:
 	rm -fv erl_crash.dump
 
 run: compile
-	erl -pa ebin deps/*/ebin -s securities start_link -s securities_http start_link -sname securities
+	@erl $(ERL_ARGS) -boot start_sasl -noshell -noinput -detached
+	@echo "securities application started"
+
+run-dev: compile
+	erl $(ERL_ARGS)
 
 test: compile
 	@erl -pa ebin -s securities_tests test -noshell -noinput -s init stop

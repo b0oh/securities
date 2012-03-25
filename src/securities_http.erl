@@ -38,11 +38,15 @@ shutdown() ->
 %%%------------------------------------------------------------------------
 
 init([]) ->
+  process_flag(trap_exit, true),
   io:format("~p (~p) starting...~n", [?MODULE, self()]),
-  yaws:start_embedded("priv/www", [{port, 8081},
-                                   {servername, "localhost"},
+  {ok, Port} = application:get_env(securities, http_port),
+  {ok, Name} = application:get_env(securities, http_servername),
+  {ok, Listen} = application:get_env(securities, http_listen),
+  yaws:start_embedded("priv/www", [{port, Port},
+                                   {servername, Name},
                                    {dir_listings, true},
-                                   {listen, {0, 0, 0, 0}},
+                                   {listen, Listen},
                                    {appmods, [{"api", ?MODULE}]},
                                    {flags, [{auth_log, false}, {access_log, false}]}]),
   erlang:monitor(process, yaws_server),
@@ -86,10 +90,6 @@ format(Format, Args) -> lists:flatten(io_lib:format(Format, Args)).
 response(Code, Type, Body) ->
   [{status, Code},
    {content, Type, Body}].
-
-
-error(Body) ->
-  response(500, "text/plain", Body).
 
 
 json(Arg) ->
